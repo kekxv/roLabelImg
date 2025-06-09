@@ -42,7 +42,7 @@ except ImportError:
     from PyQt4.QtGui import *
     from PyQt4.QtCore import *
 
-import resources
+from . import resources
 # Add internal libs
 dir_name = os.path.abspath(os.path.dirname(__file__))
 libs_path = os.path.join(dir_name, 'libs')
@@ -904,12 +904,22 @@ class MainWindow(QMainWindow, WindowMixin):
             filePath = self.settings.get('filename')
 
         unicodeFilePath = ustr(filePath)
+        # 修复：如果 filePath 不是图片文件（如目录），则自动加载第一张图片
+        if unicodeFilePath not in self.mImgList:
+            if self.mImgList:
+                unicodeFilePath = self.mImgList[0]
+            else:
+                return  # 没有图片可加载
+
         # Tzutalin 20160906 : Add file list and dock to move faster
         # Highlight the file item
         if unicodeFilePath and self.fileListWidget.count() > 0:
-            index = self.mImgList.index(unicodeFilePath)
-            fileWidgetItem = self.fileListWidget.item(index)
-            fileWidgetItem.setSelected(True)
+            try:
+                index = self.mImgList.index(unicodeFilePath)
+                fileWidgetItem = self.fileListWidget.item(index)
+                fileWidgetItem.setSelected(True)
+            except ValueError:
+                pass
 
         if unicodeFilePath and os.path.exists(unicodeFilePath):
             if LabelFile.isLabelFile(unicodeFilePath):
@@ -1381,8 +1391,12 @@ def get_main_app(argv=[]):
     return app, win
 
 
-def main(argv=[]):
-    '''construct main app and run it'''
+def main():
+    argv = sys.argv
+    print('启动参数:')
+    print('image_dir:', argv[1] if len(argv) >= 2 else None)
+    print('classes_file:', argv[2] if len(argv) >= 3 else None)
+    print('labels_dir:', argv[3] if len(argv) >= 4 else None)
     app, win = get_main_app(argv)
     # 如果传入 image_dir，自动加载图片目录
     if len(argv) >= 2 and argv[1]:
@@ -1392,6 +1406,9 @@ def main(argv=[]):
         for imgPath in win.mImgList:
             item = QListWidgetItem(imgPath)
             win.fileListWidget.addItem(item)
+        # 修复：如果 filePath 不是图片文件，设为 None，避免 openNextImg 报错
+        if not win.mImgList or win.filePath not in win.mImgList:
+            win.filePath = None
         win.openNextImg()
     return app.exec_()
 
