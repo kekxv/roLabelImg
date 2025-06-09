@@ -10,7 +10,8 @@ with open('HISTORY.rst') as history_file:
     history = history_file.read()
 
 requirements = [
-    # TODO: put package requirements here
+    'PyQt5',
+    'lxml',
 ]
 
 test_requirements = [
@@ -20,27 +21,27 @@ test_requirements = [
 ]
 
 setup(
-    name='labelImg',
+    name='roLabelImg',
     version='1.3.3',
-    description="LabelImg is a graphical image annotation tool and label object bounding boxes in images",
+    description="roLabelImg is a graphical image annotation tool for labeling ROTATED rectangle regions, rewritten from 'labelImg' and supporting rotated bounding boxes.",
     long_description=readme + '\n\n' + history,
     author="TzuTa Lin",
     author_email='tzu.ta.lin@gmail.com',
-    url='https://github.com/tzutalin/labelImg',
+    url='https://github.com/cgvict/roLabelImg',
     packages=[
-        'labelImg', 'labelImg.libs'
+        'roLabelImg', 'roLabelImg.libs'
     ],
-    package_dir={'labelImg': '.'},
+    package_dir={'roLabelImg': '.'},
     entry_points={
         'console_scripts': [
-            'labelImg=labelImg.labelImg:main'
+            'roLabelImg=roLabelImg:main'
         ]
     },
     include_package_data=True,
     install_requires=requirements,
     license="MIT license",
     zip_safe=False,
-    keywords='labelImg',
+    keywords='roLabelImg, labelImg, annotation, rotated box',
     classifiers=[
         'Development Status :: 2 - Pre-Alpha',
         'Intended Audience :: Developers',

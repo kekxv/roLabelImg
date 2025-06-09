@@ -9,6 +9,26 @@ import subprocess
 from functools import partial
 from collections import defaultdict
 
+# PyQt4/5 兼容性变量定义
+try:
+    QString = str
+    QStringList = list
+    QVariant = object
+    QSettings = QSettings if 'QSettings' in globals() else None
+    QByteArray = QByteArray if 'QByteArray' in globals() else bytes
+    QSize = QSize if 'QSize' in globals() else None
+    QPoint = QPoint if 'QPoint' in globals() else None
+    QColor = QColor if 'QColor' in globals() else None
+    QPointF = QPointF if 'QPointF' in globals() else None
+except Exception:
+    # fallback for PyQt4
+    from PyQt4.QtCore import QString, QStringList, QVariant, QSettings, QByteArray, QSize, QPoint
+    from PyQt4.QtGui import QColor
+    try:
+        from PyQt4.QtCore import QPointF
+    except ImportError:
+        QPointF = None
+
 try:
     from PyQt5.QtGui import *
     from PyQt5.QtCore import *
@@ -18,9 +38,7 @@ except ImportError:
     # Ref:
     # http://pyqt.sourceforge.net/Docs/PyQt4/incompatible_apis.html
     # http://stackoverflow.com/questions/21217399/pyqt4-qtcore-qvariant-object-instead-of-a-string
-    if sys.version_info.major >= 3:
-        import sip
-        sip.setapi('QVariant', 2)
+    # PyQt5/6 不再需要 sip.setapi，直接跳过
     from PyQt4.QtGui import *
     from PyQt4.QtCore import *
 
@@ -87,11 +105,11 @@ class HashableQListWidgetItem(QListWidgetItem):
 class MainWindow(QMainWindow, WindowMixin):
     FIT_WINDOW, FIT_WIDTH, MANUAL_ZOOM = list(range(3))
 
-    def __init__(self, defaultFilename=None, defaultPrefdefClassFile=None):
+    def __init__(self, defaultFilename=None, defaultPrefdefClassFile=None, defaultSaveDir=None):
         super(MainWindow, self).__init__()
         self.setWindowTitle(__appname__)
         # Save as Pascal voc xml
-        self.defaultSaveDir = None
+        self.defaultSaveDir = defaultSaveDir
         self.usingPascalVocFormat = True
         # For loading all image under a directory
         self.mImgList = []
@@ -401,6 +419,11 @@ class MainWindow(QMainWindow, WindowMixin):
 
         # Load predefined classes to the list
         self.loadPredefinedClasses(defaultPrefdefClassFile)
+        # 如果传入 defaultSaveDir，设置保存目录
+        if defaultSaveDir is not None:
+            self.defaultSaveDir = defaultSaveDir
+            self.statusBar().showMessage('%s started. Annotation will be saved to %s' % (__appname__, self.defaultSaveDir))
+            self.statusBar().show()
         # XXX: Could be completely declarative.
         # Restore application settings.
         if have_qstring():
@@ -1349,15 +1372,27 @@ def get_main_app(argv=[]):
     app.setWindowIcon(newIcon("app"))
     # Tzutalin 201705+: Accept extra agruments to change predefined class file
     # Usage : labelImg.py image predefClassFile
-    win = MainWindow(argv[1] if len(argv) >= 2 else None,
-                     argv[2] if len(argv) >= 3 else os.path.join('data', 'predefined_classes.txt'))
+    # 支持参数: image_dir, classes_file, labels_dir
+    image_dir = argv[1] if len(argv) >= 2 else None
+    classes_file = argv[2] if len(argv) >= 3 else os.path.join('data', 'predefined_classes.txt')
+    labels_dir = argv[3] if len(argv) >= 4 else None
+    win = MainWindow(image_dir, classes_file, labels_dir)
     win.show()
     return app, win
 
 
 def main(argv=[]):
     '''construct main app and run it'''
-    app, _win = get_main_app(argv)
+    app, win = get_main_app(argv)
+    # 如果传入 image_dir，自动加载图片目录
+    if len(argv) >= 2 and argv[1]:
+        win.dirname = argv[1]
+        win.mImgList = win.scanAllImages(argv[1])
+        win.fileListWidget.clear()
+        for imgPath in win.mImgList:
+            item = QListWidgetItem(imgPath)
+            win.fileListWidget.addItem(item)
+        win.openNextImg()
     return app.exec_()
 
 if __name__ == '__main__':
