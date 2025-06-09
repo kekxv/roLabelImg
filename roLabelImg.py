@@ -1,3 +1,8 @@
+import math
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
 #!/usr/bin/env python
 # -*- coding: utf8 -*-
 import codecs
@@ -103,9 +108,63 @@ class HashableQListWidgetItem(QListWidgetItem):
 
 
 class MainWindow(QMainWindow, WindowMixin):
+    def saveYoloFormat(self, filename, shapes, imagePath, class_list):
+        """保存为YOLO格式的txt文件，支持普通框和旋转框（5参数）"""
+        if Image is None:
+            raise ImportError('Pillow (PIL) 未安装，无法保存YOLO格式')
+        img = Image.open(imagePath)
+        img_w, img_h = img.size
+        lines = []
+        for shape in shapes:
+            label = shape['label']
+            if label not in class_list:
+                continue
+            class_id = class_list.index(label)
+            points = shape['points']
+            # 旋转框（5点/带 isRotated）
+            if 'isRotated' in shape and shape['isRotated']:
+                # points: 4点，direction: 角度，center: (cx, cy)
+                if 'center' in shape and 'direction' in shape:
+                    center = shape['center']
+                    # 兼容 center 为 QPointF 或 tuple/list
+                    if hasattr(center, 'x') and hasattr(center, 'y'):
+                        cx, cy = center.x(), center.y()
+                    elif isinstance(center, (tuple, list)) and len(center) == 2:
+                        cx, cy = center
+                    else:
+                        continue
+                    w = math.hypot(points[0][0] - points[1][0], points[0][1] - points[1][1])
+                    h = math.hypot(points[1][0] - points[2][0], points[1][1] - points[2][1])
+                    angle = shape['direction']
+                    # 归一化
+                    cx_n = cx / img_w
+                    cy_n = cy / img_h
+                    w_n = w / img_w
+                    h_n = h / img_h
+                    # YOLO OBB格式: class cx cy w h angle（angle弧度，逆时针，范围[-pi, pi]）
+                    lines.append(f"{class_id} {cx_n:.6f} {cy_n:.6f} {w_n:.6f} {h_n:.6f} {angle:.6f}")
+                else:
+                    continue
+            else:
+                # 普通框
+                if len(points) != 4:
+                    continue
+                x_coords = [p[0] for p in points]
+                y_coords = [p[1] for p in points]
+                x_min, x_max = min(x_coords), max(x_coords)
+                y_min, y_max = min(y_coords), max(y_coords)
+                x_center = (x_min + x_max) / 2.0 / img_w
+                y_center = (y_min + y_max) / 2.0 / img_h
+                w = (x_max - x_min) / img_w
+                h = (y_max - y_min) / img_h
+                lines.append(f"{class_id} {x_center:.6f} {y_center:.6f} {w:.6f} {h:.6f}")
+        with open(filename, 'w') as f:
+            f.write('\n'.join(lines))
     FIT_WINDOW, FIT_WIDTH, MANUAL_ZOOM = list(range(3))
 
     def __init__(self, defaultFilename=None, defaultPrefdefClassFile=None, defaultSaveDir=None):
+        # defaultSaveDir 实际用于 labels_dir
+        self.labels_dir = defaultSaveDir
         super(MainWindow, self).__init__()
         self.setWindowTitle(__appname__)
         # Save as Pascal voc xml
@@ -116,6 +175,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.dirname = None
         self.labelHist = []
         self.lastOpenDir = None
+        self.defaultPrefdefClassFile = defaultPrefdefClassFile
 
         # Whether we need to save or not.
         self.dirty = False
@@ -133,19 +193,19 @@ class MainWindow(QMainWindow, WindowMixin):
 
         # Main widgets and related state.
         self.labelDialog = LabelDialog(parent=self, listItem=self.labelHist)
-        
+
         self.itemsToShapes = {}
         self.shapesToItems = {}
         self.prevLabelText = ''
 
         listLayout = QVBoxLayout()
         listLayout.setContentsMargins(0, 0, 0, 0)
-        
+
         # Create a widget for using default label
         self.useDefautLabelCheckbox = QCheckBox(u'Use default label')
         self.useDefautLabelCheckbox.setChecked(False)
         self.defaultLabelTextLine = QLineEdit()
-        useDefautLabelQHBoxLayout = QHBoxLayout()       
+        useDefautLabelQHBoxLayout = QHBoxLayout()
         useDefautLabelQHBoxLayout.addWidget(self.useDefautLabelCheckbox)
         useDefautLabelQHBoxLayout.addWidget(self.defaultLabelTextLine)
         useDefautLabelContainer = QWidget()
@@ -158,7 +218,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.editButton = QToolButton()
         self.editButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
 
-        # Add some of widgets to listLayout 
+        # Add some of widgets to listLayout
         listLayout.addWidget(self.editButton)
         listLayout.addWidget(self.diffcButton)
         listLayout.addWidget(useDefautLabelContainer)
@@ -218,8 +278,8 @@ class MainWindow(QMainWindow, WindowMixin):
         self.addDockWidget(Qt.RightDockWidgetArea, self.dock)
         # Tzutalin 20160906 : Add file list and dock to move faster
         self.addDockWidget(Qt.RightDockWidgetArea, self.filedock)
-        self.dockFeatures = QDockWidget.DockWidgetClosable\
-            | QDockWidget.DockWidgetFloatable
+        self.dockFeatures = QDockWidget.DockWidgetClosable \
+                            | QDockWidget.DockWidgetFloatable
         self.dock.setFeatures(self.dock.features() ^ self.dockFeatures)
         self.filedock.setFeatures(self.filedock.features() ^ self.dockFeatures)
 
@@ -270,7 +330,7 @@ class MainWindow(QMainWindow, WindowMixin):
                         'w', 'new', u'Draw a new Box', enabled=False)
 
         createRo = action('Create\nRotatedRBox', self.createRoShape,
-                        'e', 'newRo', u'Draw a new RotatedRBox', enabled=False)
+                          'e', 'newRo', u'Draw a new RotatedRBox', enabled=False)
 
         delete = action('Delete\nRectBox', self.deleteSelectedShape,
                         'Delete', 'delete', u'Delete', enabled=False)
@@ -529,7 +589,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.canvas.menus[0].clear()
         addActions(self.canvas.menus[0], menu)
         self.menus.edit.clear()
-        actions = (self.actions.create,) if self.beginner()\
+        actions = (self.actions.create,) if self.beginner() \
             else (self.actions.createMode, self.actions.editMode)
         addActions(self.menus.edit, actions + self.actions.editMenu)
 
@@ -633,7 +693,7 @@ class MainWindow(QMainWindow, WindowMixin):
             self.canvas.restoreCursor()
             self.actions.create.setEnabled(True)
             self.actions.createRo.setEnabled(True)
-            
+
 
     def toggleDrawMode(self, edit=True):
         self.canvas.setEditing(edit)
@@ -672,6 +732,9 @@ class MainWindow(QMainWindow, WindowMixin):
         if not self.canvas.editing():
             return
         item = item if item else self.currentItem()
+        if item is None:
+            # 无选中项时不做任何操作，防止空指针异常
+            return
         text = self.labelDialog.popUp(item.text())
         if text is not None:
             item.setText(text)
@@ -774,34 +837,49 @@ class MainWindow(QMainWindow, WindowMixin):
             self.labelFile.verified = self.canvas.verified
 
         def format_shape(s):
-            return dict(label=s.label,
-                        line_color=s.line_color.getRgb()
-                        if s.line_color != self.lineColor else None,
-                        fill_color=s.fill_color.getRgb()
-                        if s.fill_color != self.fillColor else None,
-                        points=[(p.x(), p.y()) for p in s.points],
-                       # add chris
-                        difficult = s.difficult,
-                        # You Hao 2017/06/21
-                        # add for rotated bounding box
-                        direction = s.direction,
-                        center = s.center,
-                        isRotated = s.isRotated)
+            # 兼容普通框和旋转框
+            d = dict(label=s.label,
+                     points=[(p.x(), p.y()) for p in s.points])
+            # 关键：isRotated、direction、center 需从 shape 的属性或 __dict__ 获取
+            if hasattr(s, 'isRotated') and getattr(s, 'isRotated', False):
+                d['isRotated'] = True
+                # direction
+                if hasattr(s, 'direction'):
+                    d['direction'] = getattr(s, 'direction', 0.0)
+                elif 'direction' in s.__dict__:
+                    d['direction'] = s.__dict__['direction']
+                # center
+                if hasattr(s, 'center'):
+                    d['center'] = getattr(s, 'center', (0.0, 0.0))
+                elif 'center' in s.__dict__:
+                    d['center'] = s.__dict__['center']
+            return d
 
         shapes = [format_shape(shape) for shape in self.canvas.shapes]
-        # Can add differrent annotation formats here
+
+        # 读取类别文件
+        class_file = self.defaultPrefdefClassFile if hasattr(self, 'defaultPrefdefClassFile') else os.path.join('data', 'predefined_classes.txt')
+        if os.path.exists(class_file):
+            with open(class_file, 'r', encoding='utf-8') as f:
+                class_list = [line.strip() for line in f if line.strip()]
+        else:
+            class_list = []
+
+        # 调试输出，便于排查为何txt为空
+        print('[YOLO DEBUG] shapes:', shapes)
+        print('[YOLO DEBUG] class_list:', class_list)
+
+        # 保存为YOLO格式txt
         try:
-            if self.usingPascalVocFormat is True:
-                print ('Img: ' + self.filePath + ' -> Its xml: ' + annotationFilePath)
-                self.labelFile.savePascalVocFormat(annotationFilePath, shapes, self.filePath, self.imageData,
-                                                   self.lineColor.getRgb(), self.fillColor.getRgb())
-            else:
-                self.labelFile.save(annotationFilePath, shapes, self.filePath, self.imageData,
-                                    self.lineColor.getRgb(), self.fillColor.getRgb())
+            # annotationFilePath 可能是 .xml，替换为 .txt
+            txt_path = annotationFilePath
+            if txt_path.endswith('.xml'):
+                txt_path = txt_path[:-4] + '.txt'
+            self.saveYoloFormat(txt_path, shapes, self.filePath, class_list)
+            print(f"[YOLO] Saved: {txt_path}")
             return True
-        except LabelFileError as e:
-            self.errorMessage(u'Error saving label data',
-                              u'<b>%s</b>' % e)
+        except Exception as e:
+            self.errorMessage(u'Error saving YOLO label data', u'<b>%s</b>' % e)
             return False
 
     def copySelectedShape(self):
@@ -897,7 +975,7 @@ class MainWindow(QMainWindow, WindowMixin):
             item.setCheckState(Qt.Checked if value else Qt.Unchecked)
 
     def loadFile(self, filePath=None):
-        """Load the specified file, or the last opened file if None."""
+        """Load the specified file, or the last opened file if None. 支持YOLO txt自动加载，支持labels_dir"""
         self.resetState()
         self.canvas.setEnabled(False)
         if filePath is None:
@@ -921,7 +999,150 @@ class MainWindow(QMainWindow, WindowMixin):
             except ValueError:
                 pass
 
-        if unicodeFilePath and os.path.exists(unicodeFilePath):
+        # 新增：支持labels_dir参数
+        labels_dir = getattr(self, 'labels_dir', None)
+        img_basename = os.path.splitext(os.path.basename(unicodeFilePath))[0]
+        txt_path = None
+        print(f"[YOLO-DEBUG] image: {unicodeFilePath}")
+        print(f"[YOLO-DEBUG] labels_dir: {labels_dir}")
+        if labels_dir and os.path.isdir(labels_dir):
+            candidate = os.path.join(labels_dir, img_basename + '.txt')
+            print(f"[YOLO-DEBUG] try label file: {candidate}")
+            if os.path.isfile(candidate):
+                txt_path = candidate
+                print(f"[YOLO-DEBUG] found label file: {txt_path}")
+            else:
+                print(f"[YOLO-DEBUG] label file not found: {candidate}")
+        else:
+            print(f"[YOLO-DEBUG] labels_dir invalid or not set")
+        # 不再回退到图片目录，只查找 labels_dir
+
+        yolo_loaded = False
+        shapes = []
+        if txt_path:
+            print(f"[YOLO-DEBUG] loading YOLO txt: {txt_path}")
+            # 读取类别文件
+            class_file = self.defaultPrefdefClassFile if hasattr(self, 'defaultPrefdefClassFile') else os.path.join('data', 'predefined_classes.txt')
+            if os.path.exists(class_file):
+                with open(class_file, 'r', encoding='utf-8') as f:
+                    class_list = [line.strip() for line in f if line.strip()]
+            else:
+                class_list = []
+            # 读取图片尺寸
+            try:
+                from PIL import Image
+                img = Image.open(unicodeFilePath)
+                img_w, img_h = img.size
+            except Exception:
+                img_w = img_h = None
+            # 解析YOLO txt，兼容空文件
+            try:
+                with open(txt_path, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        parts = line.split()
+                        if len(parts) not in (5, 6):
+                            continue
+                        class_id = int(parts[0])
+                        if class_id >= len(class_list):
+                            continue
+                        label = class_list[class_id]
+                        if len(parts) == 5:
+                            # 普通框: class cx cy w h
+                            cx, cy, w, h = map(float, parts[1:5])
+                            if img_w is None or img_h is None:
+                                continue
+                            x_min = (cx - w/2) * img_w
+                            y_min = (cy - h/2) * img_h
+                            x_max = (cx + w/2) * img_w
+                            y_max = (cy + h/2) * img_h
+                            points = [
+                                (x_min, y_min),
+                                (x_max, y_min),
+                                (x_max, y_max),
+                                (x_min, y_max)
+                            ]
+                            direction = 0.0
+                            isRotated = False
+                            center = ((x_min + x_max)/2, (y_min + y_max)/2)
+                        else:
+                            # 旋转框: class cx cy w h angle
+                            cx, cy, w, h, angle = map(float, parts[1:6])
+                            if img_w is None or img_h is None:
+                                continue
+                            cx_pix = cx * img_w
+                            cy_pix = cy * img_h
+                            w_pix = w * img_w
+                            h_pix = h * img_h
+                            # 计算四点坐标
+                            import math
+                            cos_a = math.cos(angle)
+                            sin_a = math.sin(angle)
+                            dx = w_pix / 2
+                            dy = h_pix / 2
+                            # 以中心为原点，逆时针旋转
+                            pts = [
+                                (-dx, -dy),
+                                (dx, -dy),
+                                (dx, dy),
+                                (-dx, dy)
+                            ]
+                            points = []
+                            for px, py in pts:
+                                x = cx_pix + px * cos_a - py * sin_a
+                                y = cy_pix + px * sin_a + py * cos_a
+                                points.append((x, y))
+                            direction = angle
+                            isRotated = True
+                            center = (cx_pix, cy_pix)
+                        # 组装为 loadLabels 需要的格式
+                        shapes.append((label, points, direction, isRotated, None, None, False))
+            except Exception as e:
+                print(f"[YOLO-DEBUG] Exception when parsing txt: {e}")
+                shapes = []
+            print(f"[YOLO-DEBUG] parsed shapes: {shapes}")
+            if shapes:
+                self.imageData = read(unicodeFilePath, None)
+                image = QImage.fromData(self.imageData)
+                if image.isNull():
+                    self.errorMessage(u'Error opening file',
+                                      u"<p>Make sure <i>%s</i> is a valid image file." % unicodeFilePath)
+                    self.status("Error reading %s" % unicodeFilePath)
+                    return False
+                self.status("Loaded %s" % os.path.basename(unicodeFilePath))
+                self.image = image
+                self.filePath = unicodeFilePath
+                self.canvas.loadPixmap(QPixmap.fromImage(image))
+                self.loadLabels(shapes)
+                self.setClean()
+                self.canvas.setEnabled(True)
+                self.adjustScale(initial=True)
+                self.paintCanvas()
+                self.addRecentFile(self.filePath)
+                self.toggleActions(True)
+                # 显示当前图片序号/总数
+                img_idx = 0
+                img_total = len(self.mImgList) if hasattr(self, 'mImgList') and self.mImgList else 0
+                if img_total > 0:
+                    try:
+                        img_idx = self.mImgList.index(self.filePath) + 1
+                    except Exception:
+                        img_idx = 0
+                title_suffix = f" [{img_idx}/{img_total}]" if img_total > 0 and img_idx > 0 else ""
+                self.setWindowTitle(__appname__ + title_suffix + ' ' + filePath)
+                if self.labelList.count():
+                    self.labelList.setCurrentItem(self.labelList.item(self.labelList.count()-1))
+                self.canvas.setFocus(True)
+                return True
+            else:
+                # 没有标注时状态栏提示
+                self.statusBar().showMessage('当前图片无标注（YOLO txt 为空）', 5000)
+            yolo_loaded = False
+            # yolo_loaded = True
+        # 如果没有YOLO txt，或解析失败，回退到原有XML加载
+        if not yolo_loaded:
             if LabelFile.isLabelFile(unicodeFilePath):
                 try:
                     self.labelFile = LabelFile(unicodeFilePath)
@@ -983,8 +1204,8 @@ class MainWindow(QMainWindow, WindowMixin):
         return False
 
     def resizeEvent(self, event):
-        if self.canvas and not self.image.isNull()\
-           and self.zoomMode != self.MANUAL_ZOOM:
+        if self.canvas and not self.image.isNull() \
+                and self.zoomMode != self.MANUAL_ZOOM:
             self.adjustScale()
         super(MainWindow, self).resizeEvent(event)
 
@@ -1068,8 +1289,8 @@ class MainWindow(QMainWindow, WindowMixin):
             path = '.'
 
         dirpath = ustr(QFileDialog.getExistingDirectory(self,
-                                                       '%s - Save to the directory' % __appname__, path,  QFileDialog.ShowDirsOnly
-                                                       | QFileDialog.DontResolveSymlinks))
+                                                        '%s - Save to the directory' % __appname__, path,  QFileDialog.ShowDirsOnly
+                                                        | QFileDialog.DontResolveSymlinks))
 
         if dirpath is not None and len(dirpath) > 1:
             self.defaultSaveDir = dirpath
@@ -1082,7 +1303,7 @@ class MainWindow(QMainWindow, WindowMixin):
         if self.filePath is None:
             return
 
-        path = os.path.dirname(ustr(self.filePath))\
+        path = os.path.dirname(ustr(self.filePath)) \
             if self.filePath else '.'
         if self.usingPascalVocFormat:
             filters = "Open Annotation XML file (%s)" % \
@@ -1097,15 +1318,15 @@ class MainWindow(QMainWindow, WindowMixin):
         if not self.mayContinue():
             return
 
-        path = os.path.dirname(self.filePath)\
+        path = os.path.dirname(self.filePath) \
             if self.filePath else '.'
 
         if self.lastOpenDir is not None and len(self.lastOpenDir) > 1:
             path = self.lastOpenDir
 
         dirpath = ustr(QFileDialog.getExistingDirectory(self,
-                                                     '%s - Open Directory' % __appname__, path,  QFileDialog.ShowDirsOnly
-                                                     | QFileDialog.DontResolveSymlinks))
+                                                        '%s - Open Directory' % __appname__, path,  QFileDialog.ShowDirsOnly
+                                                        | QFileDialog.DontResolveSymlinks))
 
         if dirpath is not None and len(dirpath) > 1:
             self.lastOpenDir = dirpath
@@ -1121,7 +1342,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
     def verifyImg(self, _value=False):
         # Proceding next image without dialog if having any label
-         if self.filePath is not None:
+        if self.filePath is not None:
             try:
                 self.labelFile.toggleVerify()
             except AttributeError:
@@ -1154,9 +1375,9 @@ class MainWindow(QMainWindow, WindowMixin):
     def openNextImg(self, _value=False):
         # Proceding next image without dialog if having any label
         if self.autoSaving is True and self.defaultSaveDir is not None:
-            if self.dirty is True: 
+            if self.dirty is True:
                 self.dirty = False
-                self.canvas.verified = True               
+                self.canvas.verified = True
                 self.saveFile()
 
         if not self.mayContinue():
