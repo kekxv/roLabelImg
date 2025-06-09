@@ -32,8 +32,9 @@ setup(
         'roLabelImg', 'roLabelImg.libs'
     ],
     package_dir={'roLabelImg': '.'},
-    py_modules=['resources'],
-    data_files=[('', ['resources.qrc'])],
+    package_data={
+        'roLabelImg': ['resources.py', 'resources.qrc']
+    },
     entry_points={
         'console_scripts': [
             'roLabelImg=roLabelImg:main'
