@@ -154,6 +154,44 @@ class Shape(object):
                 else:
                     painter.fillPath(center_path, QColor(0, 0, 0))
 
+            # 显示旋转角度（仅旋转框）
+            if self.isRotated and self.center is not None:
+                angle_deg = self.direction * 180.0 / math.pi
+                text = f"{angle_deg:.1f}°"
+                # 根据图像大小自适应字号
+                # 取框宽高均值作为参考
+                if len(self.points) >= 2:
+                    w = math.hypot(self.points[1].x() - self.points[0].x(), self.points[1].y() - self.points[0].y())
+                else:
+                    w = 40
+                if len(self.points) >= 4:
+                    h = math.hypot(self.points[3].x() - self.points[0].x(), self.points[3].y() - self.points[0].y())
+                else:
+                    h = 40
+                size = max(10, int(0.06 * (w + h) / 2))  # 最小10，缩小自适应系数
+                font = QFont()
+                font.setPointSize(size)
+                font.setBold(True)
+                painter.save()
+                painter.setFont(font)
+                # 角度显示在中心点右上
+                offset_x = max(10, int(size * 0.8))
+                offset_y = -max(10, int(size * 0.8))
+                x = self.center.x() + offset_x
+                y = self.center.y() + offset_y
+                # 先画白色粗描边，再画黑色字
+                # 多次平移绘制白色描边，确保各方向都有白边
+                outline_width = max(5, int(size * 0.35))
+                painter.setPen(QColor(255, 255, 255))
+                for dx in range(-outline_width, outline_width + 1):
+                    for dy in range(-outline_width, outline_width + 1):
+                        if dx == 0 and dy == 0:
+                            continue
+                        painter.drawText(x + dx, y + dy, text)
+                painter.setPen(QColor(0, 0, 0))
+                painter.drawText(x, y, text)
+                painter.restore()
+
     def paintNormalCenter(self, painter):
         if self.center is not None:
             center_path = QPainterPath();
