@@ -109,7 +109,7 @@ class HashableQListWidgetItem(QListWidgetItem):
 
 class MainWindow(QMainWindow, WindowMixin):
     def saveYoloFormat(self, filename, shapes, imagePath, class_list):
-        """保存为YOLO格式的txt文件，支持普通框和旋转框（5参数）"""
+        """保存为YOLO格式的txt文件，输出为 class_index x1 y1 x2 y2 x3 y3 x4 y4，每行为一个框的四个点坐标（小数，百分比坐标）"""
         if Image is None:
             raise ImportError('Pillow (PIL) 未安装，无法保存YOLO格式')
         img = Image.open(imagePath)
@@ -121,43 +121,17 @@ class MainWindow(QMainWindow, WindowMixin):
                 continue
             class_id = class_list.index(label)
             points = shape['points']
-            # 旋转框（5点/带 isRotated）
-            if 'isRotated' in shape and shape['isRotated']:
-                # points: 4点，direction: 角度，center: (cx, cy)
-                if 'center' in shape and 'direction' in shape:
-                    center = shape['center']
-                    # 兼容 center 为 QPointF 或 tuple/list
-                    if hasattr(center, 'x') and hasattr(center, 'y'):
-                        cx, cy = center.x(), center.y()
-                    elif isinstance(center, (tuple, list)) and len(center) == 2:
-                        cx, cy = center
-                    else:
-                        continue
-                    w = math.hypot(points[0][0] - points[1][0], points[0][1] - points[1][1])
-                    h = math.hypot(points[1][0] - points[2][0], points[1][1] - points[2][1])
-                    angle = shape['direction']
-                    # 归一化
-                    cx_n = cx / img_w
-                    cy_n = cy / img_h
-                    w_n = w / img_w
-                    h_n = h / img_h
-                    # YOLO OBB格式: class cx cy w h angle（angle弧度，逆时针，范围[-pi, pi]）
-                    lines.append(f"{class_id} {cx_n:.6f} {cy_n:.6f} {w_n:.6f} {h_n:.6f} {angle:.6f}")
-                else:
-                    continue
-            else:
-                # 普通框
-                if len(points) != 4:
-                    continue
-                x_coords = [p[0] for p in points]
-                y_coords = [p[1] for p in points]
-                x_min, x_max = min(x_coords), max(x_coords)
-                y_min, y_max = min(y_coords), max(y_coords)
-                x_center = (x_min + x_max) / 2.0 / img_w
-                y_center = (y_min + y_max) / 2.0 / img_h
-                w = (x_max - x_min) / img_w
-                h = (y_max - y_min) / img_h
-                lines.append(f"{class_id} {x_center:.6f} {y_center:.6f} {w:.6f} {h:.6f}")
+            # 只支持4点框
+            if len(points) != 4:
+                continue
+            coords = []
+            for p in points:
+                x_norm = p[0] / img_w
+                y_norm = p[1] / img_h
+                coords.extend([f"{x_norm:.6f}", f"{y_norm:.6f}"])
+            # coords: [x1, y1, x2, y2, x3, y3, x4, y4]，均为百分比
+            line = f"{class_id} {' '.join(coords)}"
+            lines.append(line)
         with open(filename, 'w') as f:
             f.write('\n'.join(lines))
     FIT_WINDOW, FIT_WIDTH, MANUAL_ZOOM = list(range(3))
@@ -823,9 +797,10 @@ class MainWindow(QMainWindow, WindowMixin):
             s.append(shape)
             self.addLabel(shape)
 
-            if line_color:
+            # 只有 line_color 是长度为3或4的整数元组/列表时才赋值
+            if line_color and isinstance(line_color, (tuple, list)) and len(line_color) in (3, 4) and all(isinstance(c, int) for c in line_color):
                 shape.line_color = QColor(*line_color)
-            if fill_color:
+            if fill_color and isinstance(fill_color, (tuple, list)) and len(fill_color) in (3, 4) and all(isinstance(c, int) for c in fill_color):
                 shape.fill_color = QColor(*fill_color)
 
         self.canvas.loadShapes(s)
@@ -1043,62 +1018,34 @@ class MainWindow(QMainWindow, WindowMixin):
                         if not line:
                             continue
                         parts = line.split()
-                        if len(parts) not in (5, 6):
+                        if len(parts) != 9:
                             continue
                         class_id = int(parts[0])
+                        coords = list(map(float, parts[1:]))
                         if class_id >= len(class_list):
-                            continue
-                        label = class_list[class_id]
-                        if len(parts) == 5:
-                            # 普通框: class cx cy w h
-                            cx, cy, w, h = map(float, parts[1:5])
-                            if img_w is None or img_h is None:
-                                continue
-                            x_min = (cx - w/2) * img_w
-                            y_min = (cy - h/2) * img_h
-                            x_max = (cx + w/2) * img_w
-                            y_max = (cy + h/2) * img_h
-                            points = [
-                                (x_min, y_min),
-                                (x_max, y_min),
-                                (x_max, y_max),
-                                (x_min, y_max)
-                            ]
-                            direction = 0.0
-                            isRotated = False
-                            center = ((x_min + x_max)/2, (y_min + y_max)/2)
+                            label = str(class_id)
                         else:
-                            # 旋转框: class cx cy w h angle
-                            cx, cy, w, h, angle = map(float, parts[1:6])
-                            if img_w is None or img_h is None:
-                                continue
-                            cx_pix = cx * img_w
-                            cy_pix = cy * img_h
-                            w_pix = w * img_w
-                            h_pix = h * img_h
-                            # 计算四点坐标
-                            import math
-                            cos_a = math.cos(angle)
-                            sin_a = math.sin(angle)
-                            dx = w_pix / 2
-                            dy = h_pix / 2
-                            # 以中心为原点，逆时针旋转
-                            pts = [
-                                (-dx, -dy),
-                                (dx, -dy),
-                                (dx, dy),
-                                (-dx, dy)
-                            ]
-                            points = []
-                            for px, py in pts:
-                                x = cx_pix + px * cos_a - py * sin_a
-                                y = cy_pix + px * sin_a + py * cos_a
-                                points.append((x, y))
-                            direction = angle
-                            isRotated = True
-                            center = (cx_pix, cy_pix)
-                        # 组装为 loadLabels 需要的格式
-                        shapes.append((label, points, direction, isRotated, None, None, False))
+                            label = class_list[class_id]
+                        # 百分比转像素
+                        if img_w is None or img_h is None:
+                            continue
+                        points = [
+                            (coords[0] * img_w, coords[1] * img_h),
+                            (coords[2] * img_w, coords[3] * img_h),
+                            (coords[4] * img_w, coords[5] * img_h),
+                            (coords[6] * img_w, coords[7] * img_h)
+                        ]
+                        # 计算旋转框中心
+                        cx = sum([p[0] for p in points]) / 4
+                        cy = sum([p[1] for p in points]) / 4
+                        center = (cx, cy)
+                        # 计算旋转角度（以第1、2点为主边，逆时针，弧度）
+                        dx = points[1][0] - points[0][0]
+                        dy = points[1][1] - points[0][1]
+                        import math
+                        direction = math.atan2(dy, dx)
+                        isRotated = True
+                        shapes.append((label, points, direction, isRotated, center, None, False))
             except Exception as e:
                 print(f"[YOLO-DEBUG] Exception when parsing txt: {e}")
                 shapes = []
